@@ -106,13 +106,6 @@ Full list of language codes: [supported languages](https://www.startpinch.com/do
 
 The plugin emits standard Pipecat transcript frames for both the original and translated speech. You can consume these in any downstream `FrameProcessor`.
 
-| Frame | `user_id` | When |
-|---|---|---|
-| `TranscriptionFrame` | `""` | Final **translated** transcript |
-| `InterimTranscriptionFrame` | `""` | Interim translated transcript |
-| `TranscriptionFrame` | `"original"` | Final **original** transcript |
-| `InterimTranscriptionFrame` | `"original"` | Interim original transcript |
-
 ```python
 from pipecat.frames.frames import TranscriptionFrame, InterimTranscriptionFrame
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
