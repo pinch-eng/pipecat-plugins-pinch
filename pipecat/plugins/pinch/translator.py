@@ -16,7 +16,6 @@ import json
 import os
 import time
 
-import aiohttp
 from loguru import logger
 from pipecat.frames.frames import (
     CancelFrame,
@@ -39,7 +38,6 @@ try:
 except ImportError:  # pragma: no cover
     lk_rtc = None  # type: ignore[assignment]
 
-_PINCH_SESSION_URL = "https://api.startpinch.com/api/beta1/session"
 _PINCH_SAMPLE_RATE = 48_000
 _PINCH_CHANNELS = 1
 _RETRY_DELAYS = (1.0, 2.0, 4.0)
@@ -64,13 +62,24 @@ class PinchSessionError(PinchError):
 def _resample_pcm(data: bytes, in_rate: int, out_rate: int) -> bytes:
     """Resample 16-bit little-endian mono PCM from *in_rate* to *out_rate*.
 
-    Tries ``audioop`` first (Python ≤ 3.12 stdlib).  Falls back to a
-    pure-Python linear interpolation when ``audioop`` is unavailable (Python
-    3.13+).  For production use, add ``soxr`` to your dependencies and wire
-    it in here for better quality.
+    Tries the best available backend in order:
+
+    1. ``soxr`` + ``numpy`` — highest quality (``pip install pipecat-plugins-pinch[quality]``)
+    2. ``audioop`` — standard library, removed in Python 3.13
+    3. Pure-Python linear interpolation — always available, lowest quality
     """
     if in_rate == out_rate:
         return data
+
+    try:
+        import numpy as np
+        import soxr
+
+        samples = np.frombuffer(data, dtype=np.int16).astype(np.float32)
+        resampled = soxr.resample(samples, in_rate, out_rate)
+        return np.clip(resampled, -32768, 32767).astype(np.int16).tobytes()
+    except ImportError:
+        pass
 
     try:
         import audioop  # type: ignore[import]
@@ -210,47 +219,34 @@ class PinchTranslatorService(AIService):
         await self.push_frame(frame, direction)
 
     async def _create_session(self) -> dict:
-        headers = {
-            "Authorization": f"Bearer {self._api_key}",
-            "Content-Type": "application/json",
+        """Create a Pinch translation session via the SDK."""
+        from pinch import PinchClient, SessionParams
+        from pinch.errors import (
+            PinchAuthError as _SdkAuthError,
+            PinchError as _SdkError,
+            PinchRateLimitError as _SdkRateLimitError,
+        )
+
+        params = SessionParams(
+            source_language=self._options.source_language,
+            target_language=self._options.target_language,
+            voice_type=self._options.voice_type,
+        )
+        try:
+            client = PinchClient(api_key=self._api_key)
+            session_info = await asyncio.to_thread(client.create_session, params)
+        except _SdkAuthError as exc:
+            raise PinchAuthError(str(exc)) from exc
+        except _SdkRateLimitError as exc:
+            raise PinchRateLimitError(str(exc)) from exc
+        except _SdkError as exc:
+            raise PinchSessionError(str(exc)) from exc
+
+        return {
+            "url": session_info.url,
+            "token": session_info.token,
+            "room_name": session_info.room_name,
         }
-        body = {
-            "sourceLanguage": self._options.source_language,
-            "targetLanguage": self._options.target_language,
-            "voiceType": self._options.voice_type,
-        }
-
-        async with aiohttp.ClientSession() as http:
-            async with http.post(
-                _PINCH_SESSION_URL,
-                headers=headers,
-                json=body,
-                allow_redirects=False,
-            ) as probe:
-                if probe.status in (301, 302, 307, 308):
-                    target_url = probe.headers.get("Location", _PINCH_SESSION_URL)
-                    logger.debug("Pinch API redirect → {url}", url=target_url)
-                else:
-                    target_url = _PINCH_SESSION_URL
-
-            async with http.post(target_url, headers=headers, json=body) as resp:
-                if resp.status == 401:
-                    raise PinchAuthError("Pinch API returned HTTP 401 — check your PINCH_API_KEY.")
-                if resp.status == 429:
-                    raise PinchRateLimitError(
-                        "Pinch API returned HTTP 429 — you are being rate-limited."
-                    )
-                if resp.status != 200:
-                    text = await resp.text()
-                    raise PinchSessionError(f"Pinch API returned HTTP {resp.status}: {text!r}")
-
-                data = await resp.json()
-
-        required = ("url", "token", "room_name")
-        if not all(k in data for k in required):
-            missing = [k for k in required if k not in data]
-            raise PinchSessionError(f"Pinch session response missing required fields: {missing}")
-        return data
 
     async def _connect_with_retry(self, url: str, token: str) -> None:
         """Connect to the Pinch LiveKit room with exponential back-off retry."""
@@ -352,7 +348,6 @@ class PinchTranslatorService(AIService):
                     task = self.create_task(_stream_track(stream))
                     subscribed_streams.append(task)
 
-        asyncio.Event()
         pending_tracks: asyncio.Queue[lk_rtc.RemoteAudioTrack] = asyncio.Queue()
 
         def _on_track_subscribed(
@@ -403,9 +398,8 @@ class PinchTranslatorService(AIService):
             logger.warning("Could not parse Pinch data packet: {exc}", exc=exc)
             return
 
-        loop: asyncio.AbstractEventLoop | None = None
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
         except RuntimeError:
             logger.warning("No running event loop; dropping transcript event.")
             return
@@ -425,7 +419,7 @@ class PinchTranslatorService(AIService):
                     timestamp=str(event.timestamp),
                     language=event.language_detected,
                 )
-            asyncio.ensure_future(self.push_frame(frame), loop=loop)
+            loop.create_task(self.push_frame(frame))
 
         elif event.is_original:
             if event.is_final:
@@ -442,4 +436,4 @@ class PinchTranslatorService(AIService):
                     timestamp=str(event.timestamp),
                     language=event.language_detected,
                 )
-            asyncio.ensure_future(self.push_frame(orig_frame), loop=loop)
+            loop.create_task(self.push_frame(orig_frame))
