@@ -1,6 +1,6 @@
 # pipecat-plugins-pinch
 
-Real-time **speech-to-speech translation** for [Pipecat](https://github.com/pipecat-ai/pipecat) powered by [Pinch](https://startpinch.com).
+Real-time **voice translation** for [Pipecat](https://github.com/pipecat-ai/pipecat) powered by [Pinch](https://startpinch.com).
 
 ---
 
