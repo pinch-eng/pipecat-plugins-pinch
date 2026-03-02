@@ -45,14 +45,6 @@ Repository = "https://github.com/pinch-eng/pipecat-plugins-pinch"
 [tool.hatch.build.targets.wheel]
 packages = ["pipecat"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"pipecat/plugins/pinch" = "pipecat/plugins/pinch"
-
-[tool.hatch.build.targets.wheel.shared-data]
-
-[tool.hatch.build]
-dev-mode-dirs = ["."]
-
 [tool.ruff]
 line-length = 100
 target-version = "py310"
