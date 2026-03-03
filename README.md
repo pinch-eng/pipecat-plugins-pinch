@@ -25,6 +25,13 @@ export PINCH_API_KEY=pk_your_key_here
 ```
 
 ---
+## Compatibility
+
+- Python >= 3.10
+- Tested with `pipecat-ai >= 0.0.50`
+- Tested locally with Python 3.13.2
+
+---
 
 ## How it fits into a Pipecat pipeline
 
@@ -40,6 +47,24 @@ PinchTranslatorService        ← translate en-US → es-ES
       └─► TranscriptionFrame   → your handler        (transcripts)
 ```
 
+---
+## Foundational Example
+
+A minimal end-to-end example using Daily transport is available in:
+
+`examples/daily_basic.py`
+
+To run:
+
+1. Set the required environment variables:
+   - `PINCH_API_KEY`
+   - `DAILY_ROOM_URL`
+   - `DAILY_API_KEY`
+
+2. Run:
+```bash
+python examples/daily_basic.py
+```
 ---
 
 ## Usage
@@ -99,26 +124,6 @@ The plugin handles everything internally — calling the Pinch API, managing the
 ## Supported languages
 
 Full list of language codes: [supported languages](https://www.startpinch.com/docs/supported-languages)
-
----
-
-## Transcript frames
-
-The plugin emits standard Pipecat transcript frames for both the original and translated speech. You can consume these in any downstream `FrameProcessor`.
-
-```python
-from pipecat.frames.frames import TranscriptionFrame, InterimTranscriptionFrame
-from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
-
-class MyTranscriptHandler(FrameProcessor):
-    async def process_frame(self, frame, direction):
-        await super().process_frame(frame, direction)
-
-        if isinstance(frame, TranscriptionFrame) and frame.user_id == "":
-            print(f"Translated: {frame.text}")
-
-        await self.push_frame(frame, direction)
-```
 
 ---
 
